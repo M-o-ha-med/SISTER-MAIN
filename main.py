@@ -4,6 +4,27 @@ import pandas as pd
 from sklearn.preprocessing import LabelEncoder , MinMaxScaler
 import requests
 from io import BytesIO
+import threading
+import time
+import psutil
+import matplotlib.pyplot as plt
+
+def simulate_edge_resource_limit():
+    def throttled_cpu():
+        while True:
+            start = time.time()
+            while time.time() - start < 0.3:  # aktif 30%
+                pass
+            time.sleep(0.7)  # idle 70%
+
+    def monitor():
+        while True:
+            print(f"[CPU]: {psutil.cpu_percent()}% | [RAM]: {psutil.virtual_memory().percent}%")
+            time.sleep(1)
+
+    # Run di background
+    threading.Thread(target=throttled_cpu, daemon=True).start()
+    threading.Thread(target=monitor, daemon=True).start()
 
 
 @st.cache_resource
@@ -14,7 +35,8 @@ def load_model_and_encoders():
 
 model, encoders = load_model_and_encoders()
 
-
+if "execution_history" not in st.session_state:
+    st.session_state.execution_history = []
 
 def convert_to_df(time_spent_alone , stage_fear , social_event_attendance , going_outside , drained_after_socializing , friend_circle_size , post_frequency):
     df = pd.DataFrame({
@@ -82,6 +104,7 @@ if uploaded_file is not None:
     force_inference_in_edge = st.checkbox("Force Inference process to use edge resources")
 
     if predict_button and force_inference_in_edge == False :
+        start = time.time()
         with st.spinner("Mengirim ke cloud..."):
             try:
                 uploaded_file.seek(0)
@@ -94,19 +117,50 @@ if uploaded_file is not None:
                 if response.status_code == 200:
                     st.success("Berhasil prediksi dari cloud!")
                     response_json = response.json()
+                    end = time.time()
+                    st.session_state.execution_history .append(("Cloud",end-start , uploaded_file.name))
                     st.write(pd.DataFrame(response_json))
 
 
             except Exception as e:
                 st.error("Terjadi kesalahan , error " , e )
     elif predict_button and force_inference_in_edge:
-        uploaded_file.seek(0)
-        response = predict_batch_locally(uploaded_file)
-        response_json = response
-        st.write(pd.DataFrame(response_json))
+        simulate_edge_resource_limit()
+        start = time.time()
+        with st.spinner("Memproses lokal dengan pembatasan edge..."):
+            uploaded_file.seek(0)
+            time.sleep(4)
+            response = predict_batch_locally(uploaded_file)
+            response_json = response
+            end = time.time()
+            
+            st.session_state.execution_history .append(("Edge",end-start , uploaded_file.name))
+            st.write(pd.DataFrame(response_json))
         
-        
-                
+    
+    
+if st.session_state.execution_history:
+    st.markdown("### 📈 Execution Time Trend")
+
+    df_time = pd.DataFrame(st.session_state.execution_history, columns=["Mode", "Time (s)", "Filename"])
+    
+
+    fig, ax = plt.subplots()
+
+    for mode in df_time["Mode"].unique():
+        subset = df_time[df_time["Mode"] == mode]
+        ax.plot(subset["Filename"], subset["Time (s)"], marker='o', label=mode)
+
+    ax.set_xlabel("Filename")
+    ax.set_xticklabels(ax.get_xticklabels(), rotation=90)
+    ax.set_ylabel("Time (seconds)")
+    ax.set_title("Trend of Inference Time based on file")
+    ax.legend()
+    ax.grid(True)
+  
+    st.pyplot(fig)
+
+              
 
     
 with st.form("Value_form"):
