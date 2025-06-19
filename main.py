@@ -110,7 +110,7 @@ if uploaded_file is not None:
                 uploaded_file.seek(0)
 
                 response = requests.post(
-                    "https://sister-api-personality.up.railway.app/predict",
+                    "https://sister-api-922886404287.asia-southeast2.run.app/predict",
                     files={"csv_file": (uploaded_file.name, uploaded_file, "text/csv")},
                 )
                 st.write(response.status_code)
