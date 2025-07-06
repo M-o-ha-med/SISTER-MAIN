@@ -17,14 +17,14 @@ def simulate_edge_resource_limit():
                 pass
             time.sleep(0.7)  # idle 70%
 
-    def monitor():
-        while True:
-            print(f"[CPU]: {psutil.cpu_percent()}% | [RAM]: {psutil.virtual_memory().percent}%")
-            time.sleep(1)
+    #def monitor():
+    #    while True:
+    #       print(f"[CPU]: {psutil.cpu_percent()}% | [RAM]: {psutil.virtual_memory().percent}%")
+    #        time.sleep(1)
 
     # Run di background
     threading.Thread(target=throttled_cpu, daemon=True).start()
-    threading.Thread(target=monitor, daemon=True).start()
+    #threading.Thread(target=monitor, daemon=True).start()
 
 
 @st.cache_resource
@@ -32,6 +32,10 @@ def load_model_and_encoders():
     model = joblib.load('Personality-prediction-model.pkl')
     encoders = joblib.load('encoder.pkl')
     return model, encoders
+
+@st.cache_data
+def convert_for_download(df):
+    return df.to_csv().encode("utf-8")
 
 model, encoders = load_model_and_encoders()
 
@@ -88,6 +92,46 @@ def predict_batch_locally(csv_file):
     result_df['Personality'] = pred
     
     return result_df.to_dict(orient="records")
+
+def edge_computing(uploaded_file):
+    simulate_edge_resource_limit()
+    start = time.time()
+    with st.spinner("Memproses lokal dengan pembatasan edge..."):
+        time.sleep(4)
+        uploaded_file.seek(0)
+        response = predict_batch_locally(uploaded_file)
+        response_json = response
+        end = time.time()
+    return ("Edge",end-start , uploaded_file.name , response_json)
+
+def cloud_computing(uploaded_file):
+    start = time.time()
+    uploaded_file.seek(0)
+
+    response = requests.post(
+        "https://sister-api-922886404287.asia-southeast2.run.app/predict",
+        files={"csv_file": (uploaded_file.name, uploaded_file, "text/csv")},
+        )
+    st.write(response.status_code)
+    
+    if response.status_code == 200:
+        
+        st.success("Berhasil prediksi dari cloud!")
+        response_json = response.json()
+        end = time.time()   
+        return ("Cloud",end-start , uploaded_file.name , response_json)
+
+    else:
+        
+        return "Error"
+         
+         
+          
+    
+  
+    
+            
+
             
 
 
@@ -102,40 +146,50 @@ if uploaded_file is not None:
     st.write(dataframe.head())
     predict_button = st.button("Predict")
     force_inference_in_edge = st.checkbox("Force Inference process to use edge resources")
+    inference_in_hybrid = st.checkbox("Set the inference process to switch resources dynamically")
 
-    if predict_button and force_inference_in_edge == False :
+    if predict_button and force_inference_in_edge == False and inference_in_hybrid == False :
         start = time.time()
         with st.spinner("Mengirim ke cloud..."):
             try:
-                uploaded_file.seek(0)
-
-                response = requests.post(
-                    "https://sister-api-922886404287.asia-southeast2.run.app/predict",
-                    files={"csv_file": (uploaded_file.name, uploaded_file, "text/csv")},
-                )
-                st.write(response.status_code)
-                if response.status_code == 200:
-                    st.success("Berhasil prediksi dari cloud!")
-                    response_json = response.json()
-                    end = time.time()
-                    st.session_state.execution_history .append(("Cloud",end-start , uploaded_file.name))
+                    rsc_type , duration , filename , response_json =  cloud_computing(uploaded_file)
+                    st.session_state.execution_history .append((rsc_type,duration , filename))
                     st.write(pd.DataFrame(response_json))
 
 
             except Exception as e:
-                st.error("Terjadi kesalahan , error " , e )
+                st.error(f"Terjadi kesalahan , error  : {e}")
+                
     elif predict_button and force_inference_in_edge:
-        simulate_edge_resource_limit()
         start = time.time()
-        with st.spinner("Memproses lokal dengan pembatasan edge..."):
-            uploaded_file.seek(0)
-            time.sleep(4)
-            response = predict_batch_locally(uploaded_file)
-            response_json = response
-            end = time.time()
+        rsc_type , duration , filename , response_json =  edge_computing(uploaded_file)
+        st.session_state.execution_history .append((rsc_type,duration , filename))
+        st.write(pd.DataFrame(response_json))
+    
+
+    
+    elif predict_button and inference_in_hybrid:
+        size_of_data = len(dataframe.index)
+        st.write(size_of_data)
+        if size_of_data >= 4000 : 
             
-            st.session_state.execution_history .append(("Edge",end-start , uploaded_file.name))
+            rsc_type , duration , filename , response_json =  edge_computing(uploaded_file)
+            st.session_state.execution_history.append(("Hybrid",duration , filename))
             st.write(pd.DataFrame(response_json))
+            
+        elif size_of_data <= 4000:
+            rsc_type , duration , filename , response_json =  cloud_computing(uploaded_file)
+            st.session_state.execution_history.append(("Hybrid",duration , filename))
+            st.write(pd.DataFrame(response_json))
+    
+    csv = convert_for_download(dataframe)
+    st.download_button(
+        label = "Download CSV FILE",
+        data = csv,
+        file_name = "Duration.csv",
+    )
+            
+        
         
     
     
@@ -160,9 +214,7 @@ if st.session_state.execution_history:
   
     st.pyplot(fig)
 
-              
 
-    
 with st.form("Value_form"):
 
     
